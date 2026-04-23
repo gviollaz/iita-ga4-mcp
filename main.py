@@ -209,5 +209,5 @@ async def ga4_device_geo(params: DeviceGeoInput) -> str:
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    logger.info(f"Starting IITA GA4 MCP on port {port}")
-    uvicorn.run(mcp.sse_app(), host="0.0.0.0", port=port)
+    logger.info(f"Starting IITA GA4 MCP on port {port} (streamable HTTP at /mcp)")
+    uvicorn.run(mcp.streamable_http_app(), host="0.0.0.0", port=port)
