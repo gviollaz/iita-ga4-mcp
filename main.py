@@ -4,12 +4,10 @@ Provides GA4 reporting data via MCP protocol.
 """
 
 import os
-import json
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, List
 
-import uvicorn
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -23,6 +21,7 @@ from google.oauth2.credentials import Credentials
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("iita-ga4-mcp")
 
+PORT = int(os.environ.get("PORT", 8080))
 PROPERTY_ID = os.environ.get("GA4_PROPERTY_ID", "")
 CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
@@ -56,7 +55,13 @@ def _format_report(response, dims_list, metrics_list):
     lines.append(f"\n**Rows**: {len(response.rows)} | **Row count**: {response.row_count}")
     return "\n".join(lines)
 
-mcp = FastMCP("iita_ga4_mcp")
+mcp = FastMCP(
+    "iita_ga4_mcp",
+    host="0.0.0.0",
+    port=PORT,
+    stateless_http=True,
+    json_response=False,
+)
 
 class RunReportInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -208,6 +213,5 @@ async def ga4_device_geo(params: DeviceGeoInput) -> str:
     return f"### GA4 {params.breakdown.title()} Breakdown -- {sd} to {ed}\n\n" + _format_report(_get_client().run_report(request), dims, mets)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    logger.info(f"Starting IITA GA4 MCP on port {port} (streamable HTTP at /mcp)")
-    uvicorn.run(mcp.streamable_http_app(), host="0.0.0.0", port=port)
+    logger.info(f"Starting IITA GA4 MCP on 0.0.0.0:{PORT} (streamable HTTP at /mcp)")
+    mcp.run(transport="streamable-http")
