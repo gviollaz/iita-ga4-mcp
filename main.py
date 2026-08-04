@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field, ConfigDict
 
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
@@ -27,6 +28,9 @@ CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 REFRESH_TOKEN = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
 TOKEN_URI = "https://oauth2.googleapis.com/token"
+
+# Railway's generated domain for this service.
+KNOWN_PUBLIC_HOST = "web-production-bc44d.up.railway.app"
 
 def _get_client():
     creds = Credentials(token=None, refresh_token=REFRESH_TOKEN, client_id=CLIENT_ID,
@@ -55,12 +59,43 @@ def _format_report(response, dims_list, metrics_list):
     lines.append(f"\n**Rows**: {len(response.rows)} | **Row count**: {response.row_count}")
     return "\n".join(lines)
 
+def _allowed_hosts():
+    """Hosts accepted by the DNS-rebinding check.
+
+    KNOWN_PUBLIC_HOST is kept alongside RAILWAY_PUBLIC_DOMAIN because that
+    variable is not guaranteed to be present in every Railway service.
+    """
+    allow = ["127.0.0.1", "localhost", "127.0.0.1:*", "localhost:*"]
+    extra = os.environ.get("MCP_ALLOWED_HOSTS", "").strip()
+    if extra:
+        allow += [h.strip() for h in extra.split(",") if h.strip()]
+    for key in ("RAILWAY_PUBLIC_DOMAIN", "RAILWAY_STATIC_URL"):
+        val = os.environ.get(key, "").strip()
+        if val:
+            host = val.replace("https://", "").replace("http://", "").strip("/")
+            if host and host not in allow:
+                allow.append(host)
+    if KNOWN_PUBLIC_HOST not in allow:
+        allow.append(KNOWN_PUBLIC_HOST)
+    return allow
+
+
+# Escape hatch: if Railway's domain changes and requests start getting 421,
+# set MCP_DNS_REBINDING_PROTECTION=false. Authentication is unaffected.
+_transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=os.environ.get(
+        "MCP_DNS_REBINDING_PROTECTION", "true"
+    ).strip().lower() in ("true", "1", "yes"),
+    allowed_hosts=_allowed_hosts(),
+)
+
 mcp = FastMCP(
     "iita_ga4_mcp",
     host="0.0.0.0",
     port=PORT,
     stateless_http=True,
     json_response=False,
+    transport_security=_transport_security,
 )
 
 class RunReportInput(BaseModel):
@@ -213,5 +248,10 @@ async def ga4_device_geo(params: DeviceGeoInput) -> str:
     return f"### GA4 {params.breakdown.title()} Breakdown -- {sd} to {ed}\n\n" + _format_report(_get_client().run_report(request), dims, mets)
 
 if __name__ == "__main__":
-    logger.info(f"Starting IITA GA4 MCP on 0.0.0.0:{PORT} (streamable HTTP at /mcp)")
-    mcp.run(transport="streamable-http")
+    # Deliberately not calling mcp.run() here. Doing so serves /mcp with no
+    # authentication, which is exactly the hole fixed in v0.2.0. server.py is
+    # the only supported entry point; it wraps this app with auth middleware.
+    raise SystemExit(
+        "Run `python server.py` (or `uvicorn server:app`), not main.py. "
+        "main.py only defines the tools; server.py adds authentication."
+    )
